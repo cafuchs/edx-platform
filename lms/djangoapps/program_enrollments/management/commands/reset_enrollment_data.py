@@ -63,3 +63,4 @@ class Command(BaseCommand):
                 raise CommandError('User confirmation required.  No records have been modified')
 
         log.info(u'Deleting %s records...', q1_count + q2_count)
+        raise CommandError('blah')

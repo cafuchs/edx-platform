@@ -12,6 +12,7 @@ from six import text_type
 
 from openedx.core.djangoapps.catalog.cache import (
     COURSE_PROGRAMS_CACHE_KEY_TPL,
+    ORGANIZATION_PROGRAMS_CACHE_KEY_TPL,
     PATHWAY_CACHE_KEY_TPL,
     PROGRAM_CACHE_KEY_TPL,
     PROGRAMS_BY_TYPE_CACHE_KEY_TPL,
@@ -59,6 +60,7 @@ class Command(BaseCommand):
         pathways = {}
         courses = {}
         programs_by_type = {}
+        organizations = {}
         for site in Site.objects.all():
             site_config = getattr(site, 'configuration', None)
             if site_config is None or not site_config.get_value('COURSE_CATALOG_API_URL'):
@@ -86,6 +88,7 @@ class Command(BaseCommand):
             pathways.update(new_pathways)
             courses.update(self.get_courses(new_programs))
             programs_by_type.update(self.get_programs_by_type(site, new_programs))
+            organizations.update(self.get_organizations(new_programs))
 
             logger.info(u'Caching UUIDs for {total} programs for site {site_name}.'.format(
                 total=len(uuids),
@@ -111,6 +114,9 @@ class Command(BaseCommand):
 
         logger.info(text_type('Caching program UUIDs by {} program types.'.format(len(programs_by_type))))
         cache.set_many(programs_by_type, None)
+
+        logger.info(u'Caching programs uuids for {} organizations'.format(len(organizations)))
+        cache.set_many(organizations, None)
 
         if failure:
             sys.exit(1)
@@ -236,3 +242,16 @@ class Command(BaseCommand):
             cache_key = PROGRAMS_BY_TYPE_CACHE_KEY_TPL.format(site_id=site.id, program_type=program_type)
             programs_by_type[cache_key].append(program['uuid'])
         return programs_by_type
+
+    def get_organizations(self, programs):
+        """
+        Get all organizations for the programs.
+        """
+        organizations = defaultdict(list)
+        failure = False
+
+        for program in programs.values():
+            for org in program['authoring_organizations']:
+                org_cache_key = ORGANIZATION_PROGRAMS_CACHE_KEY_TPL.format(org_key=org['key'])
+                organizations[org_cache_key].append(program['uuid'])
+        return organizations, failure

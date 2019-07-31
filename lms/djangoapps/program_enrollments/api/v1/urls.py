@@ -1,10 +1,12 @@
 """ Program Enrollments API v1 URLs. """
 from __future__ import absolute_import
 
+from django.conf import settings
 from django.conf.urls import url
 
 from lms.djangoapps.program_enrollments.api.v1.constants import PROGRAM_UUID_PATTERN
 from lms.djangoapps.program_enrollments.api.v1.views import (
+    EnrollmentDataResetView,
     ProgramEnrollmentsView,
     ProgramCourseEnrollmentsView,
     ProgramCourseEnrollmentOverviewView,
@@ -46,3 +48,14 @@ urlpatterns = [
         name="program_course_enrollments_overview"
     ),
 ]
+
+sandbox_admin_patterns = [
+    url(
+        r'^integration-reset',
+        EnrollmentDataResetView.as_view(),
+        name="reset_enrollment_data"
+    )
+]
+
+if settings.FEATURES.get('ENABLE_ENROLLMENT_RESET'):
+    urlpatterns += sandbox_admin_patterns

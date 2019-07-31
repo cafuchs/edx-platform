@@ -9,8 +9,11 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pytz import UTC
 
+from django.conf import settings
 from django.http import Http404
 from django.core.exceptions import PermissionDenied
+from django.core.management import call_command
+from django.db import transaction
 from django.urls import reverse
 from django.utils.functional import cached_property
 from edx_rest_framework_extensions import permissions
@@ -46,7 +49,12 @@ from lms.djangoapps.program_enrollments.api.v1.serializers import (
     ProgramEnrollmentModifyRequestSerializer,
 )
 from lms.djangoapps.program_enrollments.models import ProgramCourseEnrollment, ProgramEnrollment
-from lms.djangoapps.program_enrollments.utils import get_user_by_program_id, ProviderDoesNotExistException
+from lms.djangoapps.program_enrollments.utils import (
+    get_provider_slug,
+    get_user_by_program_id,
+    ProviderDoesNotExistException,
+)
+from organizations.models import Organization
 from student.helpers import get_resume_urls_for_enrollments
 from student.models import CourseEnrollment
 from student.roles import CourseInstructorRole, CourseStaffRole, UserBasedRole
@@ -1209,3 +1217,51 @@ class ProgramCourseEnrollmentOverviewView(DeveloperErrorViewMixin, ProgramSpecif
             else:
                 return CourseRunProgressStatuses.UPCOMING
         return None
+
+class EnrollmentDataResetView(APIView):
+    """
+    Resets enrollments and users for a given organization and set of programs.
+    Note, this will remove ALL users from the input organization.
+   
+    Path: ``/api/program_enrollments/v1/integration-reset/``
+
+    Accepts: [POST]
+
+    ------------------------------------------------------------------------------------
+    POST
+    ------------------------------------------------------------------------------------
+
+    **Returns**
+
+        * 200: OK - Enrollments and users sucessfully deleted
+        * 400: Bad Requeset - Program does not match the requested organization
+        * 401: Unauthorized - The requesting user is not authenticated.
+        * 404: Not Found - A requested program does not exist.
+
+    **Response** 
+    """
+    authentication_classes = (
+        JwtAuthentication,
+        OAuth2AuthenticationAllowInactiveUser,
+        SessionAuthenticationAllowInactiveUser,
+    )
+    permission_classes = (permissions.JWT_RESTRICTED_APPLICATION_OR_USER_ACCESS,)
+
+    @transaction.atomic
+    def post(self, request):
+        org_key = request.data['organization']
+
+        try:
+            organization = Organization.objects.get(short_name=org_key)
+        except Organization.DoesNotExist:
+            raise self.api_error(
+                status_code=status.HTTP_404_NOT_FOUND,
+                developer_message="requested organization not found",
+                error_code='organization_not_found'
+            )
+        idp_slug = get_provider_slug(organization)
+        call_command('remove_social_auth_users', idp_slug, force=True)
+
+        programs = get_programs_for_organization(organization=org_key)
+        call_command('reset_enrollment_data', ','.join(programs), force=True)
+        return Response('done')
