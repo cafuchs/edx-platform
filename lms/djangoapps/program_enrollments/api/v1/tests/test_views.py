@@ -9,12 +9,16 @@ from uuid import UUID, uuid4
 
 import ddt
 import mock
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.test import override_settings
 from django.urls import reverse
 from freezegun import freeze_time
 from opaque_keys.edx.keys import CourseKey
+
 from pytz import UTC
+from organizations.tests.factories import OrganizationFactory
 from rest_framework import status
 from rest_framework.test import APITestCase
 from six import text_type
@@ -32,7 +36,7 @@ from lms.djangoapps.program_enrollments.api.v1.constants import ProgramEnrollmen
 from lms.djangoapps.program_enrollments.models import ProgramCourseEnrollment, ProgramEnrollment
 from lms.djangoapps.program_enrollments.tests.factories import ProgramCourseEnrollmentFactory, ProgramEnrollmentFactory
 from lms.djangoapps.program_enrollments.utils import ProviderDoesNotExistException
-from openedx.core.djangoapps.catalog.cache import PROGRAM_CACHE_KEY_TPL
+from openedx.core.djangoapps.catalog.cache import ORGANIZATION_PROGRAMS_CACHE_KEY_TPL, PROGRAM_CACHE_KEY_TPL
 from openedx.core.djangoapps.catalog.tests.factories import CourseFactory, CourseRunFactory
 from openedx.core.djangoapps.catalog.tests.factories import OrganizationFactory as CatalogOrganizationFactory
 from openedx.core.djangoapps.catalog.tests.factories import ProgramFactory
@@ -41,9 +45,9 @@ from openedx.core.djangoapps.content.course_overviews.tests.factories import Cou
 from openedx.core.djangolib.testing.utils import CacheIsolationMixin
 from student.roles import CourseStaffRole
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
+from third_party_auth.tests.factories import SAMLProviderConfigFactory
+from xmodule.modulestore.tests.factories import CourseFactory as ModulestoreCourseFactory, ItemFactory
 from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory as ModulestoreCourseFactory
-from xmodule.modulestore.tests.factories import ItemFactory
 
 
 class ListViewTestMixin(object):
@@ -359,6 +363,7 @@ class ProgramCacheTestCaseMixin(CacheIsolationMixin):
         return program
 
     def set_program_in_catalog_cache(self, program_uuid, program):
+        import pdb; pdb.set_trace()
         cache.set(PROGRAM_CACHE_KEY_TPL.format(uuid=program_uuid), program, None)
 
 
@@ -1842,3 +1847,47 @@ class ProgramCourseEnrollmentOverviewViewTests(ProgramCacheTestCaseMixin, Shared
         response = self.client.get(self.get_url(self.program_uuid))
         self.assertEqual(status.HTTP_200_OK, response.status_code)
         self.assertIn('micromasters_title', response.data['course_runs'][0])
+
+
+class EnrollmentDataResetViewTests(ProgramCacheTestCaseMixin, APITestCase):
+
+    ENABLED_CACHES = ['default']
+
+    FEATURES_WITH_ENABLED = settings.FEATURES.copy()
+    FEATURES_WITH_ENABLED['ENABLE_ENROLLMENT_RESET'] = True
+
+    reset_enrollments_cmd = 'reset_enrollment_data'
+    reset_users_cmd = 'remove_social_auth_users'
+
+    def setUp(self):
+        super(EnrollmentDataResetViewTests, self).setUp()
+        self.start_cache_isolation()
+        self.organization_key = 'uox'
+        self.program_uuids = [str(uuid4()), str(uuid4())]
+        self.organization = OrganizationFactory(short_name=self.organization_key)
+        self.provider = SAMLProviderConfigFactory(organization=self.organization)
+
+        cache.set(ORGANIZATION_PROGRAMS_CACHE_KEY_TPL.format(org_key=self.organization_key), self.program_uuids)
+
+        self.global_staff = GlobalStaffFactory.create(username='global-staff', password='password')
+        self.client.login(username=self.global_staff.username, password='password')
+
+    def request(self, organization):
+        return self.client.post(
+            reverse('programs_api:v1:reset_enrollment_data'),
+            {'organization': organization},
+            format='json',
+        )
+
+    @override_settings(FEATURES=FEATURES_WITH_ENABLED)
+    @mock.patch('lms.djangoapps.program_enrollments.api.v1.views.call_command', autospec=True)
+    def test_reset(self, mock_call_command):
+        self.request(self.organization_key)
+        mock_call_command.assert_called_with(self.reset_enrollments_cmd, ','.join(self.program_uuids), force=True)
+
+    def test_url_feature_flag_blah(self):
+        pass
+    
+    def test_no_programs_doesnt_break(self):
+        pass
+
