@@ -19,7 +19,7 @@ from edx_rest_framework_extensions.auth.session.authentication import SessionAut
 from opaque_keys.edx.keys import CourseKey
 from rest_framework import status
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView
+# from rest_framework.generics import ListAPIView
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
@@ -38,6 +38,7 @@ from lms.djangoapps.grades.api import (
     clear_prefetched_course_grades,
     prefetch_course_grades,
 )
+from lms.djangoapps.grades.rest_api.v1.utils import CourseEnrollmentPagination
 from lms.djangoapps.program_enrollments.api.v1.constants import (
     CourseEnrollmentResponseStatuses,
     CourseRunProgressStatuses,
@@ -143,25 +144,11 @@ def verify_course_exists_and_in_program(view_func):
     return wrapped_function
 
 
-class ProgramEnrollmentPagination(CursorPagination):
+class ProgramEnrollmentPagination(CourseEnrollmentPagination):
     """
     Pagination class for views in the Program Enrollments app.
     """
-    ordering = 'id'
     page_size = 100
-    page_size_query_param = 'page_size'
-
-    def get_page_size(self, request):
-        """
-        Get the page size based on the defined page size parameter if defined.
-        """
-        try:
-            page_size_string = request.query_params[self.page_size_query_param]
-            return int(page_size_string)
-        except (KeyError, ValueError):
-            pass
-
-        return self.page_size
 
 
 class ProgramEnrollmentsView(DeveloperErrorViewMixin, PaginatedAPIView):
@@ -1224,7 +1211,7 @@ class ProgramCourseEnrollmentOverviewView(DeveloperErrorViewMixin, ProgramSpecif
 class ProgramCourseGradesView(
         DeveloperErrorViewMixin,
         ProgramCourseRunSpecificViewMixin,
-        ListAPIView,
+        PaginatedAPIView,
 ):
     """
     A view for retrieving a paginated list of grades for all students enrolled
@@ -1307,7 +1294,7 @@ class ProgramCourseGradesView(
         grade_results = self._load_grade_results(program_uuid, course_key)
         serializer = ProgramCourseGradeResultSerializer(grade_results, many=True)
         response_code = self._calc_response_code(grade_results)
-        return self._get_paginated_response_with_status(serializer.data, response_code)
+        return self.get_paginated_response(serializer.data, status_code=response_code)
 
     def _load_grade_results(self, program_uuid, course_key):
         """
@@ -1404,10 +1391,3 @@ class ProgramCourseGradesView(
         if any(result.is_error for result in grade_results):
             return status.HTTP_207_MULTI_STATUS
         return status.HTTP_200_OK
-
-    def _get_paginated_response_with_status(self, data, status_code):
-        """
-        Same as get_paginated_response, but takes in an HTTP status code.
-        """
-        resp = self.get_paginated_response(data)
-        return Response(status=status_code, data=resp.data)
