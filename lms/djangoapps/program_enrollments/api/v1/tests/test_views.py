@@ -46,7 +46,29 @@ from xmodule.modulestore.tests.factories import CourseFactory as ModulestoreCour
 from xmodule.modulestore.tests.factories import ItemFactory
 
 
-class ListViewTestMixin(object):
+class ProgramCacheTestCaseMixin(CacheIsolationMixin):
+    """
+    Mixin for using program cache in tests
+    """
+    ENABLED_CACHES = ['default']
+
+    def setup_catalog_cache(self, program_uuid, organization_key):
+        """
+        helper function to initialize a cached program with an single authoring_organization
+        """
+        catalog_org = CatalogOrganizationFactory.create(key=organization_key)
+        program = ProgramFactory.create(
+            uuid=program_uuid,
+            authoring_organizations=[catalog_org]
+        )
+        self.set_program_in_catalog_cache(program_uuid, program)
+        return program
+
+    def set_program_in_catalog_cache(self, program_uuid, program):
+        cache.set(PROGRAM_CACHE_KEY_TPL.format(uuid=program_uuid), program, None)
+
+
+class ListViewTestMixin(ProgramCacheTestCaseMixin):
     """
     Mixin to define some shared test data objects for program/course enrollment
     list view tests.
@@ -72,6 +94,24 @@ class ListViewTestMixin(object):
     def tearDownClass(cls):
         super(ListViewTestMixin, cls).tearDownClass()
 
+    def setUp(self):
+        super(ListViewTestMixin, self).setUp()
+        self.clear_caches()
+        self.addCleanup(self.clear_caches)
+
+        self.organization_key = "orgkey"
+        self.program = self.setup_catalog_cache(self.program_uuid, self.organization_key)
+        curriculum = next(c for c in self.program['curricula'] if c['is_active'])
+        self.course = curriculum['courses'][0]
+        self.course_run = self.course["course_runs"][0]
+        self.course_key = CourseKey.from_string(self.course_run["key"])
+        CourseOverviewFactory(id=self.course_key)
+        self.course_not_in_program = CourseFactory()
+        self.course_not_in_program_key = CourseKey.from_string(
+            self.course_not_in_program["course_runs"][0]["key"]
+        )
+        CourseOverviewFactory(id=self.course_not_in_program_key)
+
     def get_url(self, program_uuid=None, course_id=None):
         """ Returns the primary URL requested by the test case. """
         kwargs = {'program_uuid': program_uuid or self.program_uuid}
@@ -79,6 +119,12 @@ class ListViewTestMixin(object):
             kwargs['course_id'] = course_id
 
         return reverse(self.view_name, kwargs=kwargs)
+
+    def log_in_non_staff(self):
+        self.client.login(username=self.student.username, password=self.password)
+
+    def log_in_staff(self):
+        self.client.login(username=self.global_staff.username, password=self.password)
 
 
 @ddt.ddt
@@ -340,42 +386,18 @@ class ProgramEnrollmentListTest(ListViewTestMixin, APITestCase):
             assert '?cursor=' in next_response.data['previous']
 
 
-class ProgramCacheTestCaseMixin(CacheIsolationMixin):
-    """
-    Mixin for using program cache in tests
-    """
-    ENABLED_CACHES = ['default']
-
-    def setup_catalog_cache(self, program_uuid, organization_key):
-        """
-        helper function to initialize a cached program with an single authoring_organization
-        """
-        catalog_org = CatalogOrganizationFactory.create(key=organization_key)
-        program = ProgramFactory.create(
-            uuid=program_uuid,
-            authoring_organizations=[catalog_org]
-        )
-        self.set_program_in_catalog_cache(program_uuid, program)
-        return program
-
-    def set_program_in_catalog_cache(self, program_uuid, program):
-        cache.set(PROGRAM_CACHE_KEY_TPL.format(uuid=program_uuid), program, None)
-
-
 @ddt.ddt
-class BaseCourseEnrollmentTestsMixin(ProgramCacheTestCaseMixin):
+class BaseCourseEnrollmentTestsMixin(ListViewTestMixin, ProgramCacheTestCaseMixin):
     """
     A base for tests for course enrollment.
     Children should override self.request()
     """
+    view_name = 'programs_api:v1:program_course_enrollments'
 
     @classmethod
     def setUpClass(cls):
         super(BaseCourseEnrollmentTestsMixin, cls).setUpClass()
         cls.start_cache_isolation()
-        cls.password = 'password'
-        cls.student = UserFactory.create(username='student', password=cls.password)
-        cls.global_staff = GlobalStaffFactory.create(username='global-staff', password=cls.password)
 
     @classmethod
     def tearDownClass(cls):
@@ -384,41 +406,14 @@ class BaseCourseEnrollmentTestsMixin(ProgramCacheTestCaseMixin):
 
     def setUp(self):
         super(BaseCourseEnrollmentTestsMixin, self).setUp()
-        self.clear_caches()
-        self.addCleanup(self.clear_caches)
-        self.program_uuid = uuid4()
-        self.organization_key = "orgkey"
-        self.program = self.setup_catalog_cache(self.program_uuid, self.organization_key)
-        curriculum = next(c for c in self.program['curricula'] if c['is_active'])
-        self.course = curriculum['courses'][0]
-        self.course_run = self.course["course_runs"][0]
-        self.course_key = CourseKey.from_string(self.course_run["key"])
-        CourseOverviewFactory(id=self.course_key)
-        self.course_not_in_program = CourseFactory()
-        self.course_not_in_program_key = CourseKey.from_string(
-            self.course_not_in_program["course_runs"][0]["key"]
-        )
-        CourseOverviewFactory(id=self.course_not_in_program_key)
         self.default_url = self.get_url(self.program_uuid, self.course_key)
-        self.client.login(username=self.global_staff, password=self.password)
+        self.log_in_staff()
 
     def learner_enrollment(self, student_key, enrollment_status="active"):
         """
         Convenience method to create a learner enrollment record
         """
         return {"student_key": student_key, "status": enrollment_status}
-
-    def get_url(self, program_uuid, course_id):
-        """
-        Convenience method to build a path for a program course enrollment request
-        """
-        return reverse(
-            'programs_api:v1:program_course_enrollments',
-            kwargs={
-                'program_uuid': str(program_uuid),
-                'course_id': str(course_id)
-            }
-        )
 
     def request(self, path, data):
         pass
@@ -493,7 +488,7 @@ class BaseCourseEnrollmentTestsMixin(ProgramCacheTestCaseMixin):
 
     def test_403_forbidden(self):
         self.client.logout()
-        self.client.login(username=self.student, password=self.password)
+        self.log_in_non_staff()
         request_data = [self.learner_enrollment("learner-1")]
         response = self.request(self.default_url, request_data)
         self.assertEqual(403, response.status_code)
@@ -1844,7 +1839,7 @@ class ProgramCourseEnrollmentOverviewViewTests(ProgramCacheTestCaseMixin, Shared
         self.assertIn('micromasters_title', response.data['course_runs'][0])
 
 
-class ProgramCourseGradeListTest(ProgramCacheTestCaseMixin, ListViewTestMixin, APITestCase):
+class ProgramCourseGradeListTest(ListViewTestMixin, APITestCase):
     """
     Tests for GET calls to the Program Course Grades API.
     """
@@ -1872,38 +1867,25 @@ class ProgramCourseGradeListTest(ProgramCacheTestCaseMixin, ListViewTestMixin, A
 
     def test_204_no_grades_to_return(self):
         self.log_in_staff()
-        url = self.get_url()
+        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_id)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(response.data['results'], [])
 
     def test_401_if_unauthenticated(self):
-        url = self.get_url()
+        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_id)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_403_if_not_staff(self):
         self.log_in_non_staff()
-        url = self.get_url()
+        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_id)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_404_not_found(self):
         fake_program_uuid = self.program_uuid_tmpl.format(99)
         self.log_in_staff()
-        url = self.get_url(program_uuid=fake_program_uuid)
+        url = self.get_url(program_uuid=fake_program_uuid, course_id=self.course_id)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def get_url(self, program_uuid=None, course_id=None):
-        kwargs = {
-            'program_uuid': program_uuid or self.program_uuid,
-            'course_id': course_id or self.course_id,
-        }
-        return reverse(self.view_name, kwargs=kwargs)
-
-    def log_in_non_staff(self):
-        self.client.login(username=self.student.username, password=self.password)
-
-    def log_in_staff(self):
-        self.client.login(username=self.global_staff.username, password=self.password)

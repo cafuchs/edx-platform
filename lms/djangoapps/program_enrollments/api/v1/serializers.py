@@ -3,8 +3,6 @@ API Serializers
 """
 from __future__ import absolute_import
 
-from collections import namedtuple
-
 from rest_framework import serializers
 from six import text_type
 
@@ -133,18 +131,21 @@ class ProgramCourseEnrollmentListSerializer(serializers.Serializer):
         return text_type(obj.program_enrollment.curriculum_uuid)
 
 
-class ProgramCourseGradeResult(
-        namedtuple(
-            'ProgramCourseGradeResult',
-            ['program_enrollment', 'course_grade'],
-        )
-):
+class ProgramCourseGradeResult(object):
     """
     Represents a courserun grade for a user enrolled through a program.
 
     Can be passed to ProgramCourseGradeResultSerializer.
     """
     is_error = False
+
+    def __init__(self, program_enrollment, course_grade):
+        """
+        Creates a new grade result given a program_enrollment object
+        and a course grade object.
+        """
+        self.program_enrollment = program_enrollment
+        self.course_grade = course_grade
 
     @property
     def student_key(self):
@@ -163,12 +164,7 @@ class ProgramCourseGradeResult(
         return self.course_grade.letter_grade
 
 
-class ProgramCourseGradeErrorResult(
-        namedtuple(
-            'ProgramCourseGradeErrorResult',
-            ['program_enrollment', 'exception'],
-        )
-):
+class ProgramCourseGradeErrorResult(object):
     """
     Represents a failure to load a courserun grade for a user enrolled through
     a program.
@@ -176,6 +172,11 @@ class ProgramCourseGradeErrorResult(
     Can be passed to ProgramCourseGradeResultSerializer.
     """
     is_error = True
+
+    def __init__(self, program_enrollment, exception):
+        """ Creates a new course grade error object given a program_enrollment and an exception. """
+        self.program_enrollment = program_enrollment
+        self.exception = exception
 
     @property
     def student_key(self):
