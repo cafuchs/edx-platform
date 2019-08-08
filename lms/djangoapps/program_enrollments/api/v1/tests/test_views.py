@@ -16,9 +16,8 @@ from django.test import override_settings
 from django.urls import reverse
 from freezegun import freeze_time
 from opaque_keys.edx.keys import CourseKey
-
-from pytz import UTC
 from organizations.tests.factories import OrganizationFactory
+from pytz import UTC
 from rest_framework import status
 from rest_framework.test import APITestCase
 from six import text_type
@@ -46,8 +45,9 @@ from openedx.core.djangolib.testing.utils import CacheIsolationMixin
 from student.roles import CourseStaffRole
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
 from third_party_auth.tests.factories import SAMLProviderConfigFactory
-from xmodule.modulestore.tests.factories import CourseFactory as ModulestoreCourseFactory, ItemFactory
 from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
+from xmodule.modulestore.tests.factories import CourseFactory as ModulestoreCourseFactory
+from xmodule.modulestore.tests.factories import ItemFactory
 
 
 class ListViewTestMixin(object):
@@ -363,7 +363,6 @@ class ProgramCacheTestCaseMixin(CacheIsolationMixin):
         return program
 
     def set_program_in_catalog_cache(self, program_uuid, program):
-        import pdb; pdb.set_trace()
         cache.set(PROGRAM_CACHE_KEY_TPL.format(uuid=program_uuid), program, None)
 
 
@@ -1850,7 +1849,7 @@ class ProgramCourseEnrollmentOverviewViewTests(ProgramCacheTestCaseMixin, Shared
 
 
 class EnrollmentDataResetViewTests(ProgramCacheTestCaseMixin, APITestCase):
-
+    """ Tests endpoint for resetting enrollments in integration environments """
     ENABLED_CACHES = ['default']
 
     FEATURES_WITH_ENABLED = settings.FEATURES.copy()
@@ -1862,12 +1861,9 @@ class EnrollmentDataResetViewTests(ProgramCacheTestCaseMixin, APITestCase):
     def setUp(self):
         super(EnrollmentDataResetViewTests, self).setUp()
         self.start_cache_isolation()
-        self.organization_key = 'uox'
-        self.program_uuids = [str(uuid4()), str(uuid4())]
-        self.organization = OrganizationFactory(short_name=self.organization_key)
-        self.provider = SAMLProviderConfigFactory(organization=self.organization)
 
-        cache.set(ORGANIZATION_PROGRAMS_CACHE_KEY_TPL.format(org_key=self.organization_key), self.program_uuids)
+        self.organization = OrganizationFactory(short_name='uox')
+        self.provider = SAMLProviderConfigFactory(organization=self.organization)
 
         self.global_staff = GlobalStaffFactory.create(username='global-staff', password='password')
         self.client.login(username=self.global_staff.username, password='password')
@@ -1879,15 +1875,43 @@ class EnrollmentDataResetViewTests(ProgramCacheTestCaseMixin, APITestCase):
             format='json',
         )
 
+    def set_catalog_org_cache(self, organization, program_uuids):
+        cache.set(ORGANIZATION_PROGRAMS_CACHE_KEY_TPL.format(org_key=organization.short_name), program_uuids)
+
+    @mock.patch('lms.djangoapps.program_enrollments.api.v1.views.call_command', autospec=True)
+    def test_feature_disabled_by_default(self, mock_call_command):
+        response = self.request(self.organization.short_name)
+        self.assertEqual(response.status_code, status.HTTP_501_NOT_IMPLEMENTED)
+        mock_call_command.assert_has_calls([])
+
     @override_settings(FEATURES=FEATURES_WITH_ENABLED)
     @mock.patch('lms.djangoapps.program_enrollments.api.v1.views.call_command', autospec=True)
     def test_reset(self, mock_call_command):
-        self.request(self.organization_key)
-        mock_call_command.assert_called_with(self.reset_enrollments_cmd, ','.join(self.program_uuids), force=True)
+        programs = [str(uuid4()), str(uuid4())]
+        self.set_catalog_org_cache(self.organization, programs)
 
-    def test_url_feature_flag_blah(self):
-        pass
-    
-    def test_no_programs_doesnt_break(self):
-        pass
+        response = self.request(self.organization.short_name)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_call_command.assert_has_calls([
+            mock.call(self.reset_users_cmd, self.provider.slug, force=True),
+            mock.call(self.reset_enrollments_cmd, ','.join(programs), force=True),
+        ])
 
+    @override_settings(FEATURES=FEATURES_WITH_ENABLED)
+    @mock.patch('lms.djangoapps.program_enrollments.api.v1.views.call_command', autospec=True)
+    def test_organization_not_found(self, mock_call_command):
+        response = self.request('yyz')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        mock_call_command.assert_has_calls([])
+
+    @override_settings(FEATURES=FEATURES_WITH_ENABLED)
+    @mock.patch('lms.djangoapps.program_enrollments.api.v1.views.call_command', autospec=True)
+    def test_no_programs_doesnt_break(self, mock_call_command):
+        programs = []
+        self.set_catalog_org_cache(self.organization, programs)
+
+        response = self.request(self.organization.short_name)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_call_command.assert_has_calls([
+            mock.call(self.reset_users_cmd, self.provider.slug, force=True),
+        ])

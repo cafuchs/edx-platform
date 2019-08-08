@@ -17,10 +17,8 @@ log = logging.getLogger(__name__)
 class ProgramDoesNotExistException(Exception):
     pass
 
-
 class OrganizationDoesNotExistException(Exception):
     pass
-
 
 class ProviderDoesNotExistException(Exception):
     pass
@@ -54,11 +52,11 @@ def get_user_by_program_id(external_user_id, program_uuid):
         org_key = program['authoring_organizations'][0]['key']
         organization = Organization.objects.get(short_name=org_key)
     except (KeyError, IndexError):
-        log.error(u'Cannot determine authoring organization key for catalog program [%s]', program['program_uuid'])
+        log.error(u'Cannot determine authoring organization key for catalog program [%s]', program_uuid)
         raise OrganizationDoesNotExistException
     except Organization.DoesNotExist:
         log.error(u'Unable to find organization for short_name [%s]', org_key)
-        raise OrganizationDoesNotExistException 
+        raise OrganizationDoesNotExistException
 
     return get_user_by_organization(external_user_id, organization)
 

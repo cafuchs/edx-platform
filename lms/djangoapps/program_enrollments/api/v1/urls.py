@@ -47,15 +47,9 @@ urlpatterns = [
         ProgramCourseEnrollmentOverviewView.as_view(),
         name="program_course_enrollments_overview"
     ),
-]
-
-sandbox_admin_patterns = [
     url(
         r'^integration-reset',
         EnrollmentDataResetView.as_view(),
         name="reset_enrollment_data"
     )
 ]
-
-if settings.FEATURES.get('ENABLE_ENROLLMENT_RESET'):
-    urlpatterns += sandbox_admin_patterns
