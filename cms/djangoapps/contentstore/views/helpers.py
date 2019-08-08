@@ -222,7 +222,7 @@ def create_xblock(parent_locator, user, category, display_name, boilerplate=None
 
         # TODO need to fix components that are sending definition_data as strings, instead of as dicts
         # For now, migrate them into dicts here.
-        if isinstance(data, basestring):
+        if isinstance(data, str):
             data = {'data': data}
 
         created_block = store.create_child(

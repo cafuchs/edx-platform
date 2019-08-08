@@ -112,7 +112,7 @@ class HasStaffAccessToContent(Rule):
             course_key = instance
         elif isinstance(instance, UsageKey):
             course_key = instance.course_key
-        elif isinstance(instance, basestring):
+        elif isinstance(instance, str):
             course_key = CourseKey.from_string(instance)
 
         return self.filter(user, CourseOverview.objects.filter(id=course_key)).exists()
