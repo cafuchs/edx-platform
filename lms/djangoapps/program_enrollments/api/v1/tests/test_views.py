@@ -78,6 +78,7 @@ class ListViewTestMixin(ProgramCacheTestCaseMixin):
     @classmethod
     def setUpClass(cls):
         super(ListViewTestMixin, cls).setUpClass()
+        cls.start_cache_isolation()
         cls.program_uuid = '00000000-1111-2222-3333-444444444444'
         cls.program_uuid_tmpl = '00000000-1111-2222-3333-4444444444{0:02d}'
         cls.curriculum_uuid = 'aaaaaaaa-1111-2222-3333-444444444444'
@@ -93,6 +94,7 @@ class ListViewTestMixin(ProgramCacheTestCaseMixin):
     @classmethod
     def tearDownClass(cls):
         super(ListViewTestMixin, cls).tearDownClass()
+        cls.end_cache_isolation()
 
     def setUp(self):
         super(ListViewTestMixin, self).setUp()
@@ -101,8 +103,8 @@ class ListViewTestMixin(ProgramCacheTestCaseMixin):
 
         self.organization_key = "orgkey"
         self.program = self.setup_catalog_cache(self.program_uuid, self.organization_key)
-        curriculum = next(c for c in self.program['curricula'] if c['is_active'])
-        self.course = curriculum['courses'][0]
+        self.curriculum = next(c for c in self.program['curricula'] if c['is_active'])
+        self.course = self.curriculum['courses'][0]
         self.course_run = self.course["course_runs"][0]
         self.course_key = CourseKey.from_string(self.course_run["key"])
         CourseOverviewFactory(id=self.course_key)
@@ -1844,26 +1846,6 @@ class ProgramCourseGradeListTest(ListViewTestMixin, APITestCase):
     Tests for GET calls to the Program Course Grades API.
     """
     view_name = 'programs_api:v1:program_course_grades'
-    org_key = 'testorg'
-
-    @classmethod
-    def setUpClass(cls):
-        super(ProgramCourseGradeListTest, cls).setUpClass()
-        cls.start_cache_isolation()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.end_cache_isolation()
-        super(ProgramCourseGradeListTest, cls).tearDownClass()
-
-    def setUp(self):
-        super(ProgramCourseGradeListTest, self).setUp()
-        self.program = self.setup_catalog_cache(self.program_uuid, self.org_key)
-        curriculum = next(c for c in self.program['curricula'] if c['is_active'])
-        self.course = curriculum['courses'][0]
-        self.course_run = self.course["course_runs"][0]
-        self.course_id = CourseKey.from_string(self.course_run["key"])
-        CourseOverviewFactory(id=self.course_id)
 
     def test_204_no_grades_to_return(self):
         self.log_in_staff()
@@ -1873,19 +1855,19 @@ class ProgramCourseGradeListTest(ListViewTestMixin, APITestCase):
         self.assertEqual(response.data['results'], [])
 
     def test_401_if_unauthenticated(self):
-        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_id)
+        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_key)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_403_if_not_staff(self):
         self.log_in_non_staff()
-        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_id)
+        url = self.get_url(program_uuid=self.program_uuid, course_id=self.course_key)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_404_not_found(self):
         fake_program_uuid = self.program_uuid_tmpl.format(99)
         self.log_in_staff()
-        url = self.get_url(program_uuid=fake_program_uuid, course_id=self.course_id)
+        url = self.get_url(program_uuid=fake_program_uuid, course_id=self.course_key)
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
